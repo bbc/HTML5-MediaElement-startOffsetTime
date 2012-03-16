@@ -1,8 +1,8 @@
 # HTML5 MediaElement startOffsetTime Patches #
 
-This repository contains patches we created to implement the `startOffsetTime` attribute of HTML 5 [`HTMLMediaElement`](http://www.whatwg.org/specs/web-apps/current-work/multipage/the-video-element.html#htmlmediaelement) objects in [Firefox](http://www.mozilla.org/projects/firefox/). The `startOffsetTime` value is implemented for [WebM](http://www.webmproject.org/) video only, using the [`DateUTC` field](http://matroska.org/technical/specs/index.html) in the Segment Information section of the WebM stream.
+This repository contains patches we created to implement the `startOffsetTime` attribute of HTML 5 [`HTMLMediaElement`](http://www.whatwg.org/specs/web-apps/current-work/multipage/the-video-element.html#htmlmediaelement) objects in [Firefox](http://www.mozilla.org/projects/firefox/). The `startOffsetTime` value is implemented for [WebM](http://www.webmproject.org/) video only, using the [`DateUTC`](http://matroska.org/technical/specs/index.html) field in the Segment Information section of the WebM stream.
 
-Note that this implementation differs slightly from the current HTML 5 specification, in that `startOffsetTime` returns a double and not a [`Date`](https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Date) object. The value contains the number of milliseconds since the Unix epoch, which is easily converted to a `Date` value in JavaScript:
+Note that this implementation differs slightly from the current HTML 5 specification, in that `startOffsetTime` returns a `double` and not a [`Date`](https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Date) object. The value contains the number of milliseconds since the Unix epoch, which is easily converted to a `Date` value in JavaScript:
 
     var date = new Date(videoElement.startOffsetTime);
 
@@ -17,11 +17,11 @@ The Firefox patch also adds some other attributes to the `HTMLMediaElement` that
     readonly attribute double startTime;
 
     // The DateUTC value read from the Segment Information
-    // section of the WebM stream, but converted to be milliseconds
+    // section of the WebM stream, converted to be milliseconds
     // relative to the Unix epoch
     readonly attribute double dateUTC;
 
-There is also a patch for [FFmpeg](http://ffmpeg.org/) that sets the `DateUTC` value to the current system time when generating WebM output. `DateUTC` is calculated in the same way as the GStreamer Matroska plugin (refer to [matroska-mux.c](http://cgit.freedesktop.org/gstreamer/gst-plugins-good/tree/gst/matroska/matroska-mux.c?id=RELEASE-0.10.28) and [ebml-write.c](http://cgit.freedesktop.org/gstreamer/gst-plugins-good/tree/gst/matroska/ebml-write.c?id=RELEASE-0.10.28).
+There is also a patch for [FFmpeg](http://ffmpeg.org/) that sets the `DateUTC` value to the current system time when generating WebM output. `DateUTC` is calculated in the same way as the GStreamer Matroska plugin (refer to [matroska-mux.c](http://cgit.freedesktop.org/gstreamer/gst-plugins-good/tree/gst/matroska/matroska-mux.c?id=RELEASE-0.10.28) and [ebml-write.c](http://cgit.freedesktop.org/gstreamer/gst-plugins-good/tree/gst/matroska/ebml-write.c?id=RELEASE-0.10.28)).
 
 ## Firefox ##
 
