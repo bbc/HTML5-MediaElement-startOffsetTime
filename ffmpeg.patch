@@ -1,0 +1,96 @@
+From def694effaf8578c627c71ed5d16a005a8c83b1a Mon Sep 17 00:00:00 2001
+From: Chris Needham <chris.needham@bbc.co.uk>
+Date: Tue, 22 Nov 2011 12:10:44 +0000
+Subject: [PATCH] Set DateUTC value in header
+
+---
+ configure                 |    1 +
+ libavformat/matroskaenc.c |   39 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 40 insertions(+), 0 deletions(-)
+
+diff --git a/configure b/configure
+index f6d8415..8d7e947 100755
+--- a/configure
++++ b/configure
+@@ -1508,6 +1508,7 @@ yadif_filter_deps="gpl"
+ # libraries
+ avdevice_deps="avcodec avformat"
+ avformat_deps="avcodec"
++avformat_extralibs='-lrt'
+ postproc_deps="gpl"
+ 
+ # programs
+diff --git a/libavformat/matroskaenc.c b/libavformat/matroskaenc.c
+index e9c977a..bfa0be0 100644
+--- a/libavformat/matroskaenc.c
++++ b/libavformat/matroskaenc.c
+@@ -34,6 +34,7 @@
+ #include "libavcodec/xiph.h"
+ #include "libavcodec/mpeg4audio.h"
+ #include <strings.h>
++#include <time.h>
+ 
+ typedef struct ebml_master {
+     int64_t         pos;                ///< absolute offset in the file where the master's elements start
+@@ -174,6 +175,31 @@ static void put_ebml_uint(AVIOContext *pb, unsigned int elementid, uint64_t val)
+     put_ebml_num(pb, bytes, 0);
+     for (i = bytes - 1; i >= 0; i--)
+         avio_w8(pb, val >> i*8);
++}   
++
++/* see gst_ebml_write_sint() in gst/matroska/matroska-mux.c in GStreamer,
++   gst-plugins-good */
++
++static void put_ebml_int(AVIOContext *pb, unsigned int elementid, int64_t val)
++{
++    int i, bytes = 1;
++    uint64_t uval = (val < 0 ? (-val - 1) << 1 : val << 1);
++    uint64_t tmp = uval;
++    while (tmp>>=8) bytes++;
++
++    if (val >= 0) {
++        uval = val;
++    }
++    else {
++        uval = 0x80 << (bytes - 1);
++        uval += val;
++        uval |= 0x80 << (bytes - 1);
++    }
++
++    put_ebml_id(pb, elementid);
++    put_ebml_num(pb, bytes, 0);
++    for (i = bytes - 1; i >= 0; i--)
++        avio_w8(pb, val >> i*8);
+ }
+ 
+ static void put_ebml_float(AVIOContext *pb, unsigned int elementid, double val)
+@@ -809,6 +835,17 @@ static int mkv_write_header(AVFormatContext *s)
+     ebml_master ebml_header, segment_info;
+     AVDictionaryEntry *tag;
+     int ret, i;
++    int64_t date = 0;
++    struct timespec time;
++
++    if (clock_gettime(CLOCK_REALTIME, &time) == 0)
++    {
++        date = time.tv_sec * 1000000000LL; /* seconds -> nanoseconds */
++        date += time.tv_nsec;
++
++        /* convert unix to matroska epoch */
++        date -= 978307200LL * 1000000000LL;
++    }
+ 
+     if (!strcmp(s->oformat->name, "webm")) mkv->mode = MODE_WEBM;
+     else                                   mkv->mode = MODE_MATROSKAv2;
+@@ -844,6 +881,8 @@ static int mkv_write_header(AVFormatContext *s)
+ 
+     segment_info = start_ebml_master(pb, MATROSKA_ID_INFO, 0);
+     put_ebml_uint(pb, MATROSKA_ID_TIMECODESCALE, 1000000);
++    put_ebml_int(pb, MATROSKA_ID_DATEUTC, date);
++
+     if ((tag = av_dict_get(s->metadata, "title", NULL, 0)))
+         put_ebml_string(pb, MATROSKA_ID_TITLE, tag->value);
+     if (!(s->streams[0]->codec->flags & CODEC_FLAG_BITEXACT)) {
+-- 
+1.7.4.1
+

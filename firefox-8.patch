@@ -1,0 +1,455 @@
+From f92027f98e5e099fd62d4dff9dda8fd39b03a912 Mon Sep 17 00:00:00 2001
+From: Chris Needham <chris.needham@bbc.co.uk>
+Date: Fri, 9 Dec 2011 12:23:37 +0000
+Subject: [PATCH] Added startOffsetTime and other attributes to media elements, with WebM implementation via libnestegg
+
+---
+ content/html/content/src/nsHTMLMediaElement.cpp |   28 +++++++++++
+ content/media/nsBuiltinDecoder.cpp              |   33 +++++++++++++
+ content/media/nsBuiltinDecoder.h                |   24 +++++++++
+ content/media/nsBuiltinDecoderStateMachine.cpp  |   59 +++++++++++++++++++++--
+ content/media/nsBuiltinDecoderStateMachine.h    |    7 +++
+ content/media/nsMediaDecoder.h                  |    9 ++++
+ content/media/webm/nsWebMReader.cpp             |   17 +++++++
+ dom/interfaces/html/nsIDOMHTMLMediaElement.idl  |    6 ++
+ media/libnestegg/include/nestegg.h              |    7 +++
+ media/libnestegg/src/nestegg.c                  |   29 +++++++++++
+ 10 files changed, 215 insertions(+), 4 deletions(-)
+
+diff --git a/content/html/content/src/nsHTMLMediaElement.cpp b/content/html/content/src/nsHTMLMediaElement.cpp
+index e3c84dd..4ed82ca 100644
+--- a/content/html/content/src/nsHTMLMediaElement.cpp
++++ b/content/html/content/src/nsHTMLMediaElement.cpp
+@@ -1127,6 +1127,34 @@ NS_IMETHODIMP nsHTMLMediaElement::SetCurrentTime(double aCurrentTime)
+   return rv;
+ }
+ 
++/* readonly attribute double currentTimeAbsolute; */
++NS_IMETHODIMP nsHTMLMediaElement::GetCurrentTimeAbsolute(double *aCurrentTimeAbsolute)
++{
++  *aCurrentTimeAbsolute = mDecoder ? mDecoder->GetCurrentTimeAbsolute() : 0.0;
++  return NS_OK;
++}
++
++/* readonly attribute double startOffsetTime; */
++NS_IMETHODIMP nsHTMLMediaElement::GetStartOffsetTime(double *aStartOffsetTime)
++{
++  *aStartOffsetTime = mDecoder ? (mDecoder->GetStartOffsetTime() / 1000.0) : 0;
++  return NS_OK;
++}
++
++/* readonly attribute double startTime; */
++NS_IMETHODIMP nsHTMLMediaElement::GetStartTime(double *aStartTime)
++{
++  *aStartTime = mDecoder ? mDecoder->GetStartTime() : 0;
++  return NS_OK;
++}
++
++/* readonly attribute double dateUTC; */
++NS_IMETHODIMP nsHTMLMediaElement::GetDateUTC(double *aDateUTC)
++{
++  *aDateUTC = mDecoder ? mDecoder->GetDateUTC() : 0;
++  return NS_OK;
++}
++
+ /* readonly attribute double duration; */
+ NS_IMETHODIMP nsHTMLMediaElement::GetDuration(double *aDuration)
+ {
+diff --git a/content/media/nsBuiltinDecoder.cpp b/content/media/nsBuiltinDecoder.cpp
+index 6408d15..3ef5e72 100644
+--- a/content/media/nsBuiltinDecoder.cpp
++++ b/content/media/nsBuiltinDecoder.cpp
+@@ -110,6 +110,10 @@ nsBuiltinDecoder::nsBuiltinDecoder() :
+   mDecoderPosition(0),
+   mPlaybackPosition(0),
+   mCurrentTime(0.0),
++  mCurrentTimeAbsolute(0.0),
++  mStartOffsetTime(0),
++  mStartTime(0.0),
++  mDateUTC(0.0),
+   mInitialVolume(0.0),
+   mRequestedSeekTime(-1.0),
+   mDuration(-1),
+@@ -378,6 +382,30 @@ double nsBuiltinDecoder::GetCurrentTime()
+   return mCurrentTime;
+ }
+ 
++double nsBuiltinDecoder::GetCurrentTimeAbsolute()
++{
++  NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
++  return mCurrentTimeAbsolute;
++}
++
++PRInt64 nsBuiltinDecoder::GetStartOffsetTime()
++{
++  NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
++  return mStartOffsetTime;
++}
++
++double nsBuiltinDecoder::GetStartTime()
++{
++  NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
++  return mStartTime;
++}
++
++double nsBuiltinDecoder::GetDateUTC()
++{
++  NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
++  return mDateUTC;
++}
++
+ nsMediaStream* nsBuiltinDecoder::GetCurrentStream()
+ {
+   return mStream;
+@@ -864,6 +892,11 @@ void nsBuiltinDecoder::PlaybackPositionChanged()
+     ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+     if (mDecoderStateMachine) {
+       mCurrentTime = mDecoderStateMachine->GetCurrentTime();
++      mCurrentTimeAbsolute = mDecoderStateMachine->GetCurrentTimeAbsolute();
++      mStartOffsetTime = mDecoderStateMachine->GetStartOffsetTime();
++      mStartTime = mDecoderStateMachine->GetStartTime();
++      mDateUTC = mDecoderStateMachine->GetDateUTC();
++
+       mDecoderStateMachine->ClearPositionChangeFlag();
+     }
+   }
+diff --git a/content/media/nsBuiltinDecoder.h b/content/media/nsBuiltinDecoder.h
+index b03c860..af37d2f 100644
+--- a/content/media/nsBuiltinDecoder.h
++++ b/content/media/nsBuiltinDecoder.h
+@@ -276,6 +276,8 @@ public:
+   // aDuration is in microseconds.
+   virtual void SetDuration(PRInt64 aDuration) = 0;
+ 
++  virtual void SetDateUTC(PRInt64 aDateUTC) = 0;
++
+   // Called while decoding metadata to set the end time of the media
+   // resource. The decoder monitor must be obtained before calling this.
+   // aEndTime is in microseconds.
+@@ -303,6 +305,17 @@ public:
+   // monitor must be obtained before calling this.
+   virtual double GetCurrentTime() const = 0;
+ 
++  // For live streams, return the time position in the video stream,
++  // in seconds relative to the Unix epoch.
++  // Called from the main thread to get the current frame time. The decoder
++  // monitor must be obtained before calling this.
++  virtual double GetCurrentTimeAbsolute() const = 0;
++
++  virtual PRInt64 GetStartOffsetTime() const = 0;
++
++  virtual double GetStartTime() const = 0;
++  virtual double GetDateUTC() const = 0;
++
+   // Clear the flag indicating that a playback position change event
+   // is currently queued. This is called from the main thread and must
+   // be called with the decode monitor held.
+@@ -375,6 +388,10 @@ class nsBuiltinDecoder : public nsMediaDecoder
+   virtual void Shutdown();
+   
+   virtual double GetCurrentTime();
++  virtual double GetCurrentTimeAbsolute();
++  virtual PRInt64 GetStartOffsetTime();
++  virtual double GetStartTime();
++  virtual double GetDateUTC();
+ 
+   virtual nsresult Load(nsMediaStream* aStream,
+                         nsIStreamListener** aListener,
+@@ -631,6 +648,13 @@ public:
+   // It is read and written from the main thread only.
+   double mCurrentTime;
+ 
++  double mCurrentTimeAbsolute;
++
++  PRInt64 mStartOffsetTime;
++
++  double mStartTime;
++  double mDateUTC;
++
+   // Volume that playback should start at.  0.0 = muted. 1.0 = full
+   // volume.  Readable/Writeable from the main thread.
+   double mInitialVolume;
+diff --git a/content/media/nsBuiltinDecoderStateMachine.cpp b/content/media/nsBuiltinDecoderStateMachine.cpp
+index 6e72f8e..67cee10 100644
+--- a/content/media/nsBuiltinDecoderStateMachine.cpp
++++ b/content/media/nsBuiltinDecoderStateMachine.cpp
+@@ -201,6 +201,7 @@ nsBuiltinDecoderStateMachine::nsBuiltinDecoderStateMachine(nsBuiltinDecoder* aDe
+   mPlayDuration(0),
+   mStartTime(-1),
+   mEndTime(-1),
++  mDateUTC(0),
+   mSeekTime(0),
+   mReader(aReader),
+   mCurrentFrameTime(0),
+@@ -901,6 +902,47 @@ double nsBuiltinDecoderStateMachine::GetCurrentTime() const
+   return static_cast<double>(mCurrentFrameTime) / static_cast<double>(USECS_PER_S);
+ }
+ 
++double nsBuiltinDecoderStateMachine::GetCurrentTimeAbsolute() const
++{
++  NS_ASSERTION(NS_IsMainThread() ||
++               OnStateMachineThread() ||
++               OnDecodeThread(),
++               "Should be on main, decode, or state machine thread.");
++
++  PRInt64 currentFrameTimeAbsolute = mDateUTC * 1000 + mCurrentFrameTime + mStartTime;
++  return static_cast<double>(currentFrameTimeAbsolute) / static_cast<double>(USECS_PER_S);
++}
++
++PRInt64 nsBuiltinDecoderStateMachine::GetStartOffsetTime() const
++{
++  NS_ASSERTION(NS_IsMainThread() ||
++               OnStateMachineThread() ||
++               OnDecodeThread(),
++               "Should be on main, decode, or state machine thread.");
++
++  return mDateUTC * 1000 + mStartTime;
++}
++
++double nsBuiltinDecoderStateMachine::GetStartTime() const
++{
++  NS_ASSERTION(NS_IsMainThread() ||
++               OnStateMachineThread() ||
++               OnDecodeThread(),
++               "Should be on main, decode, or state machine thread.");
++
++  return static_cast<double>(mStartTime);
++}
++
++double nsBuiltinDecoderStateMachine::GetDateUTC() const
++{
++  NS_ASSERTION(NS_IsMainThread() ||
++               OnStateMachineThread() ||
++               OnDecodeThread(),
++               "Should be on main, decode, or state machine thread.");
++
++  return static_cast<double>(mDateUTC);
++}
++
+ PRInt64 nsBuiltinDecoderStateMachine::GetDuration()
+ {
+   mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+@@ -928,6 +970,15 @@ void nsBuiltinDecoderStateMachine::SetDuration(PRInt64 aDuration)
+   }
+ }
+ 
++void nsBuiltinDecoderStateMachine::SetDateUTC(PRInt64 aDateUTC)
++{
++  NS_ASSERTION(NS_IsMainThread() || OnStateMachineThread(),
++    "Should be on main or state machine thread.");
++  mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
++
++  mDateUTC = aDateUTC;
++}
++
+ void nsBuiltinDecoderStateMachine::SetEndTime(PRInt64 aEndTime)
+ {
+   NS_ASSERTION(OnDecodeThread(), "Should be on decode thread");
+@@ -1890,7 +1941,7 @@ nsresult nsBuiltinDecoderStateMachine::Run()
+   ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+   NS_ASSERTION(OnStateMachineThread(), "Should be on state machine thread.");
+ 
+-  return CallRunStateMachine();
++  return CallRunStateMachine();
+ }
+ 
+ nsresult nsBuiltinDecoderStateMachine::CallRunStateMachine()
+@@ -1933,9 +1984,9 @@ void nsBuiltinDecoderStateMachine::TimeoutExpired()
+   if (mIsRunning) {
+     mRunAgain = PR_TRUE;
+   } else if (!mDispatchedRunEvent) {
+-    // We don't have an event dispatched to run the state machine, so we
+-    // can just run it from here.
+-    CallRunStateMachine();
++    // We don't have an event dispatched to run the state machine, so we
++    // can just run it from here.
++    CallRunStateMachine();
+   }
+   // Otherwise, an event has already been dispatched to run the state machine
+   // as soon as possible. Nothing else needed to do, the state machine is
+diff --git a/content/media/nsBuiltinDecoderStateMachine.h b/content/media/nsBuiltinDecoderStateMachine.h
+index 45d320e..5500126 100644
+--- a/content/media/nsBuiltinDecoderStateMachine.h
++++ b/content/media/nsBuiltinDecoderStateMachine.h
+@@ -151,6 +151,7 @@ public:
+   virtual void Shutdown();
+   virtual PRInt64 GetDuration();
+   virtual void SetDuration(PRInt64 aDuration);
++  virtual void SetDateUTC(PRInt64 aDateUTC);
+   void SetEndTime(PRInt64 aEndTime);
+   virtual PRBool OnDecodeThread() const {
+     return IsCurrentThread(mDecodeThread);
+@@ -160,6 +161,10 @@ public:
+   virtual void Play();
+   virtual void Seek(double aTime);
+   virtual double GetCurrentTime() const;
++  virtual double GetCurrentTimeAbsolute() const;
++  virtual PRInt64 GetStartOffsetTime() const;
++  virtual double GetStartTime() const;
++  virtual double GetDateUTC() const;
+   virtual void ClearPositionChangeFlag();
+   virtual void SetSeekable(PRBool aSeekable);
+   virtual void UpdatePlaybackPosition(PRInt64 aTime);
+@@ -506,6 +511,8 @@ protected:
+   // machine, decode, and main threads. Access controlled by decoder monitor.
+   PRInt64 mEndTime;
+ 
++  PRInt64 mDateUTC;
++
+   // Position to seek to in microseconds when the seek state transition occurs.
+   // The decoder monitor lock must be obtained before reading or writing
+   // this value. Accessed on main and decode thread.
+diff --git a/content/media/nsMediaDecoder.h b/content/media/nsMediaDecoder.h
+index ce25af2..4f322b3 100644
+--- a/content/media/nsMediaDecoder.h
++++ b/content/media/nsMediaDecoder.h
+@@ -101,6 +101,15 @@ public:
+   // played measured in seconds.
+   virtual double GetCurrentTime() = 0;
+ 
++  // For live streams, return the time position in the video stream,
++  // in seconds relative to the Unix epoch.
++  virtual double GetCurrentTimeAbsolute() = 0;
++
++  virtual PRInt64 GetStartOffsetTime() = 0;
++
++  virtual double GetStartTime() = 0;
++  virtual double GetDateUTC() = 0;
++
+   // Seek to the time position in (seconds) from the start of the video.
+   virtual nsresult Seek(double aTime) = 0;
+ 
+diff --git a/content/media/webm/nsWebMReader.cpp b/content/media/webm/nsWebMReader.cpp
+index 5ff68ef..f0cbcc9 100644
+--- a/content/media/webm/nsWebMReader.cpp
++++ b/content/media/webm/nsWebMReader.cpp
+@@ -228,6 +228,23 @@ nsresult nsWebMReader::ReadMetadata(nsVideoInfo* aInfo)
+     mDecoder->GetStateMachine()->SetDuration(duration / NS_PER_USEC);
+   }
+ 
++  int64_t date_utc = 0;
++  r = nestegg_date_utc(mContext, &date_utc);
++
++  if (r == 0) {
++    // convert from matroska epoch to unix epoch
++    // and nanoseconds to milliseconds
++    const int64_t NSEC_PER_SEC     = 1000000000LL;
++    const int64_t EBML_DATE_OFFSET = 978307200LL * NSEC_PER_SEC;
++    const int64_t NSEC_PER_MSEC    = 1000000LL;
++
++    date_utc += EBML_DATE_OFFSET;
++    date_utc /= NSEC_PER_MSEC;
++
++    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
++    mDecoder->GetStateMachine()->SetDateUTC(date_utc);
++  }
++
+   unsigned int ntracks = 0;
+   r = nestegg_track_count(mContext, &ntracks);
+   if (r == -1) {
+diff --git a/dom/interfaces/html/nsIDOMHTMLMediaElement.idl b/dom/interfaces/html/nsIDOMHTMLMediaElement.idl
+index ba489f7..6388338 100644
+--- a/dom/interfaces/html/nsIDOMHTMLMediaElement.idl
++++ b/dom/interfaces/html/nsIDOMHTMLMediaElement.idl
+@@ -93,6 +93,12 @@ interface nsIDOMHTMLMediaElement : nsIDOMHTMLElement
+   readonly attribute boolean ended;
+   readonly attribute boolean mozAutoplayEnabled;
+            attribute boolean autoplay;
++
++  readonly attribute double currentTimeAbsolute;
++  readonly attribute double startOffsetTime;
++  readonly attribute double startTime;
++  readonly attribute double dateUTC;
++
+   void play();
+   void pause();
+ 
+diff --git a/media/libnestegg/include/nestegg.h b/media/libnestegg/include/nestegg.h
+index 4092d0a..8a8e536 100644
+--- a/media/libnestegg/include/nestegg.h
++++ b/media/libnestegg/include/nestegg.h
+@@ -173,6 +173,13 @@ int nestegg_duration(nestegg * context, uint64_t * duration);
+     @retval -1 Error. */
+ int nestegg_tstamp_scale(nestegg * context, uint64_t * scale);
+ 
++/** Query the start date and time of the media stream.
++    @param context  Stream context initialized by #nestegg_init.
++    @param date_utc Storage for the queried date and time.
++    @retval  0 Success.
++    @retval -1 Error. */
++int nestegg_date_utc(nestegg * ctx, int64_t * date_utc);
++
+ /** Query the number of tracks in the media stream.
+     @param context Stream context initialized by #nestegg_init.
+     @param tracks  Storage for the queried track count.
+diff --git a/media/libnestegg/src/nestegg.c b/media/libnestegg/src/nestegg.c
+index dd9681b..9bb9e00 100644
+--- a/media/libnestegg/src/nestegg.c
++++ b/media/libnestegg/src/nestegg.c
+@@ -38,6 +38,7 @@
+ #define ID_INFO                 0x1549a966
+ #define ID_TIMECODE_SCALE       0x2ad7b1
+ #define ID_DURATION             0x4489
++#define ID_DATE_UTC             0x4461
+ 
+ /* Cluster Elements */
+ #define ID_CLUSTER              0x1f43b675
+@@ -187,6 +188,7 @@ struct seek_head {
+ struct info {
+   struct ebml_type timecode_scale;
+   struct ebml_type duration;
++  struct ebml_type date_utc;
+ };
+ 
+ struct block_group {
+@@ -357,6 +359,7 @@ static struct ebml_element_desc ne_seek_head_elements[] = {
+ static struct ebml_element_desc ne_info_elements[] = {
+   E_FIELD(ID_TIMECODE_SCALE, TYPE_UINT, struct info, timecode_scale),
+   E_FIELD(ID_DURATION, TYPE_FLOAT, struct info, duration),
++  E_FIELD(ID_DATE_UTC, TYPE_INT, struct info, date_utc),
+   E_LAST
+ };
+ 
+@@ -716,6 +719,19 @@ ne_get_uint(struct ebml_type type, uint64_t * value)
+ }
+ 
+ static int
++ne_get_int(struct ebml_type type, int64_t * value)
++{
++  if (!type.read)
++    return -1;
++
++  assert(type.type == TYPE_INT);
++
++  *value = type.v.i;
++
++  return 0;
++}
++
++static int
+ ne_get_float(struct ebml_type type, double * value)
+ {
+   if (!type.read)
+@@ -1526,6 +1542,19 @@ nestegg_tstamp_scale(nestegg * ctx, uint64_t * scale)
+ }
+ 
+ int
++nestegg_date_utc(nestegg * ctx, int64_t * date_utc)
++{
++  int64_t date = 0;
++
++  if (ne_get_int(ctx->segment.info.date_utc, &date) != 0) {
++    date = 0;
++  }
++
++  *date_utc = date;
++  return 0;
++}
++
++int
+ nestegg_track_count(nestegg * ctx, unsigned int * tracks)
+ {
+   *tracks = ctx->track_count;
+-- 
+1.7.4.1
+
